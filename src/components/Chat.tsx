@@ -14,6 +14,39 @@ interface Command {
   action: () => Promise<void> | void
 }
 
+interface TaskCommandParams {
+  command: string
+  status: string
+}
+
+function parseTaskCommand(message: string): TaskCommandParams | null {
+  const taskRegex = /^\/tasks\s+(.+)$/i
+  const match = message.trim().match(taskRegex)
+
+  if (match) {
+    return {
+      command: 'tasks',
+      status: match[1].trim()
+    }
+  }
+  return null
+}
+
+function formatTaskList(tasks: any[]): string {
+  if (tasks.length === 0) {
+    return 'No tasks found with that status.'
+  }
+
+  return tasks.map(task => {
+    const title = task.properties.Name?.title[0]?.plain_text || 'Untitled'
+    const dueDate = task.properties.Date?.date?.start
+      ? `(Due: ${new Date(task.properties.Date.date.start).toLocaleDateString()})`
+      : ''
+
+    return `• ${title} ${dueDate}`
+  }).join('\n')
+}
+
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([])
   const [newMessage, setNewMessage] = useState('')
@@ -23,6 +56,7 @@ export default function Chat() {
   const [showCommands, setShowCommands] = useState(false)
   const [filteredCommands, setFilteredCommands] = useState<Command[]>([])
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
+  const [messageIdCounter, setMessageIdCounter] = useState(0)
 
   // Initialize services
   const calendarService = useMemo(() => new NotionCalendarService(), [])
@@ -31,7 +65,35 @@ export default function Chat() {
     [calendarService]
   )
 
+  // Helper function to get a unique message ID
+  const getNextMessageId = () => {
+    setMessageIdCounter(prev => prev + 1)
+    return `msg-${Date.now()}-${messageIdCounter}`
+  }
+
   const commands: Command[] = useMemo(() => [
+    {
+      name: '/clear',
+      description: 'Clear the message thread',
+      action: () => {
+        setMessages([])
+      }
+    },
+    {
+      name: '/list',
+      description: 'Show all available commands',
+      action: () => {
+        const commandList = commands
+          .map(cmd => `• ${cmd.name}\n    ${cmd.description}`)
+          .join('\n\n')
+
+        setMessages(prev => [...prev, {
+          id: getNextMessageId(),
+          text: `📋 Available Commands:\n\n${commandList}`,
+          sent: false
+        }])
+      }
+    },
     {
       name: '/dark',
       description: 'Switch to dark mode',
@@ -57,13 +119,13 @@ export default function Chat() {
           const analysis = await timeAnalysis.getWeeklyFreeTime()
           const formattedAnalysis = timeAnalysis.formatWeeklyFreeTime(analysis)
           setMessages(prev => [...prev, {
-            id: Date.now(),
+            id: getNextMessageId(),
             text: `Free time for next week:\n${formattedAnalysis}`,
             sent: false
           }])
         } catch (error) {
           setMessages(prev => [...prev, {
-            id: Date.now(),
+            id: getNextMessageId(),
             text: `Error analyzing free time: ${error.message}`,
             sent: false
           }])
@@ -79,20 +141,54 @@ export default function Chat() {
         try {
           const response = await window.ipcRenderer.invoke('test-notion-connection')
           setMessages(prev => [...prev, {
-            id: Date.now(),
+            id: getNextMessageId(),
             text: `Notion Database Schema:\n${JSON.stringify(response.properties, null, 2)}`,
             sent: false
           }])
         } catch (error) {
           setMessages(prev => [...prev, {
-            id: Date.now(),
+            id: getNextMessageId(),
             text: `Error testing Notion connection: ${error.message}`,
             sent: false
           }])
         }
       }
+    },
+    {
+      name: '/tasks',
+      description: 'List tasks by status (e.g., /tasks today)',
+      action: async () => {
+        const taskParams = parseTaskCommand(newMessage)
+        if (!taskParams) {
+          setMessages(prev => [...prev, {
+            id: getNextMessageId(),
+            text: 'Invalid task command. Use format: /tasks <status>',
+            sent: false
+          }])
+          return
+        }
+
+        try {
+          const tasks = await window.ipcRenderer.invoke(
+            'query-tasks-by-status',
+            taskParams.status
+          )
+
+          setMessages(prev => [...prev, {
+            id: getNextMessageId(),
+            text: `Tasks with status "${taskParams.status}":\n${formatTaskList(tasks)}`,
+            sent: false
+          }])
+        } catch (error: any) {
+          setMessages(prev => [...prev, {
+            id: getNextMessageId(),
+            text: `Error fetching tasks: ${error.message}`,
+            sent: false
+          }])
+        }
+      }
     }
-  ], [timeAnalysis, setIsDark, setIsAnalyzing])
+  ], [newMessage, timeAnalysis, setIsDark, setIsAnalyzing, messageIdCounter])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value
@@ -100,11 +196,17 @@ export default function Chat() {
 
     if (value.startsWith('/')) {
       setShowCommands(true)
-      setFilteredCommands(
-        commands.filter(cmd =>
-          cmd.name.toLowerCase().includes(value.toLowerCase())
+      if (value === '/') {
+        // Show all commands when only '/' is typed
+        setFilteredCommands(commands)
+      } else {
+        // Filter commands when typing continues
+        setFilteredCommands(
+          commands.filter(cmd =>
+            cmd.name.toLowerCase().includes(value.toLowerCase())
+          )
         )
-      )
+      }
       setSelectedCommandIndex(0)
     } else {
       setShowCommands(false)
@@ -142,7 +244,72 @@ export default function Chat() {
   const executeCommand = async (command: Command) => {
     setNewMessage('')
     setShowCommands(false)
+
+    // Add the command to the message thread with unique ID
+    setMessages(prev => [...prev, {
+      id: getNextMessageId(),
+      text: newMessage || command.name,
+      sent: true
+    }])
+
     await command.action()
+  }
+
+  const handleCommand = async (message: string): Promise<boolean> => {
+    const matchingCommand = commands.find(cmd =>
+      message.toLowerCase().startsWith(cmd.name.toLowerCase())
+    )
+
+    if (matchingCommand) {
+      await executeCommand(matchingCommand)
+      return true
+    }
+    return false
+  }
+
+  const handleSend = async () => {
+    if (!newMessage.trim()) return
+
+    if (await handleCommand(newMessage.trim())) {
+      return
+    }
+
+    setMessages([
+      ...messages,
+      {
+        id: getNextMessageId(),
+        text: newMessage,
+        sent: true,
+      },
+    ])
+    setNewMessage('')
+  }
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      handleSend()
+      return
+    }
+
+    if (e.key === 'Enter' && !e.shiftKey) {
+      if (showCommands && filteredCommands.length > 0) {
+        e.preventDefault()
+        executeCommand(filteredCommands[selectedCommandIndex])
+      }
+    } else if (showCommands) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSelectedCommandIndex(prev =>
+          prev < filteredCommands.length - 1 ? prev + 1 : prev
+        )
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSelectedCommandIndex(prev => prev > 0 ? prev - 1 : prev)
+      } else if (e.key === 'Escape') {
+        setShowCommands(false)
+      }
+    }
   }
 
   useEffect(() => {
@@ -163,30 +330,6 @@ export default function Chat() {
     }
   }, [])
 
-  const handleSend = () => {
-    if (newMessage.trim()) {
-      // Check if message is a command
-      if (!handleCommand(newMessage.trim())) {
-        setMessages([
-          ...messages,
-          {
-            id: Date.now(),
-            text: newMessage,
-            sent: true
-          }
-        ])
-      }
-      setNewMessage('')
-    }
-  }
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
-  }
-
   return (
     <div className={`flex flex-col h-full w-full ${isDark ? 'dark' : ''}`}>
       {/* Messages Container */}
@@ -197,7 +340,7 @@ export default function Chat() {
             className={`flex ${message.sent ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[70%] break-words rounded-lg px-4 py-2 ${
+              className={`max-w-[70%] break-words rounded-lg px-4 py-2 whitespace-pre-wrap ${
                 message.sent
                   ? 'bg-green-500 text-white rounded-br-none'
                   : 'bg-white dark:bg-gray-700 text-gray-800 dark:text-white rounded-bl-none'
@@ -210,15 +353,15 @@ export default function Chat() {
       </div>
 
       {/* Input Area */}
-      <div className="fixed bottom-0 left-0 right-0 border-t border-gray-200 dark:border-gray-700 p-4 bg-white dark:bg-gray-900">
-        <div className="flex gap-2 max-w-full mx-auto relative">
+      <div className="flex-none p-4 bg-white dark:bg-gray-900">
+        <div className="relative flex items-center space-x-2">
           <input
             ref={inputRef}
             type="text"
             value={newMessage}
             onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message... (⌘K to focus, type / for commands)"
+            onKeyDown={handleKeyPress}
+            placeholder="Type a message... (⌘Enter to send, type / for commands)"
             disabled={isAnalyzing}
             className="flex-1 rounded-full px-4 py-2 border border-gray-300 dark:border-gray-600
                      focus:outline-none focus:border-green-500

@@ -44,6 +44,29 @@ async function testConnection() {
   }
 }
 
+export async function getDatabaseSchema() {
+  if (!notionClient || !databaseId) {
+    throw new Error('Notion client not initialized')
+  }
+
+  try {
+    const response = await notionClient.databases.retrieve({
+      database_id: databaseId
+    })
+
+    console.log('Database schema:', {
+      title: response.title,
+      properties: Object.keys(response.properties),
+      propertyDetails: response.properties
+    })
+
+    return response
+  } catch (error) {
+    console.error('Failed to get database schema:', error)
+    throw error
+  }
+}
+
 export async function queryDatabase(startDate: string, endDate: string) {
   if (!notionClient || !databaseId) {
     throw new Error('Notion client not initialized')
@@ -78,21 +101,64 @@ export async function queryDatabase(startDate: string, endDate: string) {
   return response.results
 }
 
-// Simple test function to get database schema
-export async function getDatabaseSchema() {
+export async function queryTasksByStatus(statusFilter: string) {
   if (!notionClient || !databaseId) {
     throw new Error('Notion client not initialized')
   }
 
-  const response = await notionClient.databases.retrieve({
+  console.log('Querying tasks with status:', statusFilter)
+
+  // First, get the database schema to check property types
+  const database = await notionClient.databases.retrieve({
     database_id: databaseId
   })
 
-  console.log('Database schema:', {
-    title: response.title,
-    properties: Object.keys(response.properties),
-    propertyDetails: response.properties
+  // Find the status property and its type
+  const statusProperty = Object.entries(database.properties).find(([name, prop]) =>
+    name.toLowerCase() === 'status' || name.toLowerCase() === 'state'
+  )
+
+  if (!statusProperty) {
+    throw new Error('No status/state property found in database')
+  }
+
+  const [propertyName, propertyDetails] = statusProperty
+  console.log('Found status property:', { name: propertyName, type: propertyDetails.type })
+
+  // Build filter based on property type
+  let filter
+  switch (propertyDetails.type) {
+    case 'select':
+      filter = {
+        property: propertyName,
+        select: {
+          equals: statusFilter.toLowerCase()
+        }
+      }
+      break
+    case 'status':
+      filter = {
+        property: propertyName,
+        status: {
+          equals: statusFilter.toLowerCase()
+        }
+      }
+      break
+    default:
+      throw new Error(`Unsupported status property type: ${propertyDetails.type}`)
+  }
+
+  const response = await notionClient.databases.query({
+    database_id: databaseId,
+    filter,
+    sorts: [
+      {
+        property: 'Created time',
+        direction: 'descending'
+      }
+    ]
   })
 
-  return response
+  console.log(`Found ${response.results.length} tasks with status: ${statusFilter}`)
+  return response.results
 }
