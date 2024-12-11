@@ -4,6 +4,11 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
 import { update } from './update'
+import dotenv from 'dotenv'
+import { initializeNotion, queryDatabase, getDatabaseSchema } from './notion'
+
+// Load environment variables
+dotenv.config()
 
 const require = createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -43,6 +48,41 @@ let win: BrowserWindow | null = null
 const preload = path.join(__dirname, '../preload/index.mjs')
 const indexHtml = path.join(RENDERER_DIST, 'index.html')
 
+// Initialize Notion client before setting up IPC handlers
+let notionInitialized = false
+
+async function initializeNotionClient() {
+  try {
+    await initializeNotion()
+    notionInitialized = true
+    console.log('Notion client initialized successfully')
+  } catch (error) {
+    console.error('Failed to initialize Notion client:', error)
+    notionInitialized = false
+  }
+}
+
+function setupIpcHandlers() {
+  ipcMain.handle('query-notion-calendar', async (_, startDate: string, endDate: string) => {
+    if (!notionInitialized) {
+      throw new Error('Notion client not initialized. Please check your environment variables.')
+    }
+    try {
+      return await queryDatabase(startDate, endDate)
+    } catch (error) {
+      console.error('Failed to query Notion calendar:', error)
+      throw error
+    }
+  })
+
+  ipcMain.handle('test-notion-connection', async () => {
+    if (!notionInitialized) {
+      throw new Error('Notion client not initialized')
+    }
+    return await getDatabaseSchema()
+  })
+}
+
 async function createWindow() {
   win = new BrowserWindow({
     title: 'Main window',
@@ -79,6 +119,9 @@ async function createWindow() {
 
   // Auto update
   update(win)
+
+  await initializeNotionClient()
+  setupIpcHandlers()
 }
 
 app.whenReady().then(createWindow)
