@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { TimeAnalysisService } from '../services/analysis/TimeAnalysisService'
 import { NotionCalendarService } from '../services/notion/NotionCalendarService'
+import { v4 as uuidv4 } from 'uuid'
 
 interface Message {
-  id: number
+  id: string
   text: string
   sent: boolean
 }
@@ -56,7 +57,6 @@ export default function Chat() {
   const [showCommands, setShowCommands] = useState(false)
   const [filteredCommands, setFilteredCommands] = useState<Command[]>([])
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
-  const [messageIdCounter, setMessageIdCounter] = useState(0)
 
   // Initialize services
   const calendarService = useMemo(() => new NotionCalendarService(), [])
@@ -64,12 +64,6 @@ export default function Chat() {
     () => new TimeAnalysisService(calendarService),
     [calendarService]
   )
-
-  // Helper function to get a unique message ID
-  const getNextMessageId = () => {
-    setMessageIdCounter(prev => prev + 1)
-    return `msg-${Date.now()}-${messageIdCounter}`
-  }
 
   const commands: Command[] = useMemo(() => [
     {
@@ -88,7 +82,7 @@ export default function Chat() {
           .join('\n\n')
 
         setMessages(prev => [...prev, {
-          id: getNextMessageId(),
+          id: uuidv4(),
           text: `📋 Available Commands:\n\n${commandList}`,
           sent: false
         }])
@@ -119,13 +113,13 @@ export default function Chat() {
           const analysis = await timeAnalysis.getWeeklyFreeTime()
           const formattedAnalysis = timeAnalysis.formatWeeklyFreeTime(analysis)
           setMessages(prev => [...prev, {
-            id: getNextMessageId(),
+            id: uuidv4(),
             text: `Free time for next week:\n${formattedAnalysis}`,
             sent: false
           }])
         } catch (error) {
           setMessages(prev => [...prev, {
-            id: getNextMessageId(),
+            id: uuidv4(),
             text: `Error analyzing free time: ${error.message}`,
             sent: false
           }])
@@ -141,13 +135,13 @@ export default function Chat() {
         try {
           const response = await window.ipcRenderer.invoke('test-notion-connection')
           setMessages(prev => [...prev, {
-            id: getNextMessageId(),
+            id: uuidv4(),
             text: `Notion Database Schema:\n${JSON.stringify(response.properties, null, 2)}`,
             sent: false
           }])
         } catch (error) {
           setMessages(prev => [...prev, {
-            id: getNextMessageId(),
+            id: uuidv4(),
             text: `Error testing Notion connection: ${error.message}`,
             sent: false
           }])
@@ -161,7 +155,7 @@ export default function Chat() {
         const taskParams = parseTaskCommand(newMessage)
         if (!taskParams) {
           setMessages(prev => [...prev, {
-            id: getNextMessageId(),
+            id: uuidv4(),
             text: 'Invalid task command. Use format: /tasks <status>',
             sent: false
           }])
@@ -175,20 +169,20 @@ export default function Chat() {
           )
 
           setMessages(prev => [...prev, {
-            id: getNextMessageId(),
+            id: uuidv4(),
             text: `Tasks with status "${taskParams.status}":\n${formatTaskList(tasks)}`,
             sent: false
           }])
         } catch (error: any) {
           setMessages(prev => [...prev, {
-            id: getNextMessageId(),
+            id: uuidv4(),
             text: `Error fetching tasks: ${error.message}`,
             sent: false
           }])
         }
       }
     }
-  ], [newMessage, timeAnalysis, setIsDark, setIsAnalyzing, messageIdCounter])
+  ], [newMessage, timeAnalysis, setIsDark, setIsAnalyzing])
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value
@@ -245,9 +239,9 @@ export default function Chat() {
     setNewMessage('')
     setShowCommands(false)
 
-    // Add the command to the message thread with unique ID
+    // Add the command to the message thread
     setMessages(prev => [...prev, {
-      id: getNextMessageId(),
+      id: uuidv4(),
       text: newMessage || command.name,
       sent: true
     }])
@@ -277,7 +271,7 @@ export default function Chat() {
     setMessages([
       ...messages,
       {
-        id: getNextMessageId(),
+        id: uuidv4(),
         text: newMessage,
         sent: true,
       },
