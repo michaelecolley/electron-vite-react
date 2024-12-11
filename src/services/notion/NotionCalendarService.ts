@@ -8,24 +8,31 @@ export class NotionCalendarService {
         endDate: params.endDate?.toISOString(),
       })
 
-      const results = await window.ipcRenderer.invoke(
+      const response = await window.ipcRenderer.invoke(
         'query-notion-calendar',
         params.startDate?.toISOString(),
         params.endDate?.toISOString()
       )
 
+      const { results, datePropertyName } = response
+
       console.log('Received response:', {
         resultCount: results.length,
-        firstResult: results[0] ? 'exists' : 'none'
+        firstResult: results[0] ? 'exists' : 'none',
+        datePropertyName
       })
 
       return results.map(page => ({
         id: page.id,
-        title: page.properties.Name.title[0]?.plain_text || '',
-        startDate: new Date(page.properties.Date.date.start),
-        endDate: new Date(page.properties.Date.date.end || page.properties.Date.date.start),
-        description: page.properties.Description?.rich_text[0]?.plain_text,
-        location: page.properties.Location?.rich_text[0]?.plain_text,
+        title: page.properties.Name?.title[0]?.plain_text ||
+               page.properties.Title?.title[0]?.plain_text ||
+               'Untitled',
+        startDate: new Date(page.properties[datePropertyName].date.start),
+        endDate: page.properties[datePropertyName].date.end ?
+                new Date(page.properties[datePropertyName].date.end) :
+                new Date(page.properties[datePropertyName].date.start),
+        description: page.properties.Description?.rich_text[0]?.plain_text || '',
+        location: page.properties.Location?.rich_text[0]?.plain_text || '',
         attendees: page.properties.Attendees?.multi_select?.map(a => a.name) || [],
         accountId: 'default'
       }))

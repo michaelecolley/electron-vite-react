@@ -74,31 +74,58 @@ export async function queryDatabase(startDate: string, endDate: string) {
 
   console.log('Querying Notion database:', { startDate, endDate, databaseId })
 
+  // First, get the database schema to check property types
+  const database = await notionClient.databases.retrieve({
+    database_id: databaseId
+  })
+
+  // Find the date property (could be named Date, date, When, etc.)
+  const dateProperty = Object.entries(database.properties).find(([name, prop]) =>
+    prop.type === 'date'
+  )
+
+  if (!dateProperty) {
+    throw new Error('No date property found in database')
+  }
+
+  const [propertyName, propertyDetails] = dateProperty
+  console.log('Found date property:', { name: propertyName, type: propertyDetails.type })
+
   const response = await notionClient.databases.query({
     database_id: databaseId,
     filter: {
       and: [
         {
-          property: 'Date',
+          property: propertyName,
           date: {
             on_or_after: startDate,
           },
         },
         {
-          property: 'Date',
+          property: propertyName,
           date: {
             on_or_before: endDate,
           },
         },
       ],
     },
+    sorts: [
+      {
+        property: propertyName,
+        direction: 'ascending'
+      }
+    ]
   })
 
   console.log('Notion query response:', {
-    resultCount: response.results.length
+    resultCount: response.results.length,
+    dateProperty: propertyName
   })
 
-  return response.results
+  return {
+    results: response.results,
+    datePropertyName: propertyName // Return the property name for the client
+  }
 }
 
 export async function queryTasksByStatus(statusFilter: string) {
