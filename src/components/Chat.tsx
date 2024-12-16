@@ -1,18 +1,27 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { TimeAnalysisService } from '../services/analysis/TimeAnalysisService'
 import { NotionCalendarService } from '../services/notion/NotionCalendarService'
+import { NotionBubble } from './NotionBubble'
 import { v4 as uuidv4 } from 'uuid'
+
+interface NotionPage {
+  id?: string
+  properties: Record<string, any>
+  isNew?: boolean
+}
 
 interface Message {
   id: string
   text: string
   sent: boolean
+  notionData?: NotionPage
+  isEditing?: boolean
 }
 
 interface Command {
   name: string
   description: string
-  action: () => Promise<void> | void
+  action: (text?: string) => Promise<void> | void
 }
 
 interface TaskCommandParams {
@@ -65,7 +74,7 @@ export default function Chat() {
     [calendarService]
   )
 
-  const commands: Command[] = useMemo(() => [
+  const commands = useMemo(() => [
     {
       name: '/clear',
       description: 'Clear the message thread',
@@ -181,6 +190,89 @@ export default function Chat() {
           }])
         }
       }
+    },
+    {
+      name: '/new',
+      description: 'Create a new entry with optional title (e.g., /new do the laundry)',
+      action: async (text?: string) => {
+        console.log('Executing /new command with text:', text)
+        try {
+          // Extract the title from the command
+          const title = text?.replace('/new', '').trim()
+
+          if (title) {
+            // If we have a title, create the entry directly without showing the bubble
+            const newEntry = {
+              properties: {
+                Name: {
+                  type: 'title',
+                  title: [{
+                    type: 'text',
+                    text: {
+                      content: title
+                    }
+                  }]
+                }
+              }
+            }
+
+            console.log('Creating direct entry:', newEntry)
+            const result = await window.ipcRenderer.invoke('create-notion-entry', newEntry)
+            console.log('Creation result:', result)
+
+            setMessages(prev => [...prev, {
+              id: uuidv4(),
+              text: `✓ Created: ${title}`,
+              sent: false
+            }])
+          } else {
+            // If no title, show the NotionBubble component
+            setMessages(prev => [...prev, {
+              id: uuidv4(),
+              text: 'New Entry',
+              sent: false,
+              notionData: {
+                properties: {},
+                isNew: true
+              },
+              isEditing: true
+            }])
+          }
+        } catch (error: any) {
+          console.error('Error in /new command:', error)
+          setMessages(prev => [...prev, {
+            id: uuidv4(),
+            text: `Error creating entry: ${error.message}`,
+            sent: false
+          }])
+        }
+      }
+    },
+    {
+      name: '/view',
+      description: 'View recent entries',
+      action: async () => {
+        console.log('Fetching entries')
+        try {
+          const entries = await window.ipcRenderer.invoke('get-notion-entries')
+          console.log('Received entries:', entries)
+
+          const messages = entries.map(entry => ({
+            id: uuidv4(),
+            text: entry.properties.Name?.title[0]?.plain_text || 'Untitled',
+            sent: false,
+            notionData: entry
+          }))
+          setMessages(prev => [...prev, ...messages])
+        } catch (error: any) {
+          console.error('Error fetching entries:', error)
+          setMessages(prev => [...prev, {
+            id: uuidv4(),
+            text: `Error fetching entries: ${error.message}`,
+            sent: false
+          }])
+        }
+      }
     }
   ], [newMessage, timeAnalysis, setIsDark, setIsAnalyzing])
 
@@ -249,40 +341,31 @@ export default function Chat() {
     await command.action()
   }
 
-  const handleCommand = async (message: string): Promise<boolean> => {
-    const matchingCommand = commands.find(cmd =>
-      message.toLowerCase().startsWith(cmd.name.toLowerCase())
-    )
-
-    if (matchingCommand) {
-      await executeCommand(matchingCommand)
-      return true
+  const handleCommand = async (command: string) => {
+    const matchedCommand = commands.find(cmd => command.startsWith(cmd.name))
+    if (matchedCommand) {
+      await matchedCommand.action(command)
+      setNewMessage('')
+      setShowCommands(false)
+      setSelectedCommandIndex(0)
     }
-    return false
   }
 
-  const handleSend = async () => {
-    if (!newMessage.trim()) return
-
-    if (await handleCommand(newMessage.trim())) {
-      return
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (newMessage.trim()) {
+      if (newMessage.startsWith('/')) {
+        await handleCommand(newMessage.trim())
+      } else {
+        // ... existing message handling ...
+      }
     }
-
-    setMessages([
-      ...messages,
-      {
-        id: uuidv4(),
-        text: newMessage,
-        sent: true,
-      },
-    ])
-    setNewMessage('')
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault()
-      handleSend()
+      handleSubmit(e)
       return
     }
 
@@ -329,20 +412,84 @@ export default function Chat() {
       {/* Messages Container */}
       <div className="flex-1 overflow-y-auto p-4 pb-20 space-y-4 bg-gray-100 dark:bg-gray-800">
         {messages.map((message) => (
-          <div
-            key={message.id}
-            className={`flex ${message.sent ? 'justify-end' : 'justify-start'}`}
-          >
+          message.notionData ? (
+            <NotionBubble
+              key={message.id}
+              data={message.notionData}
+              isEditing={message.isEditing}
+              onUpdate={async (updatedData) => {
+                try {
+                  console.log('Updating entry:', updatedData)
+                  const result = updatedData.isNew
+                    ? await window.ipcRenderer.invoke('create-notion-entry', updatedData)
+                    : await window.ipcRenderer.invoke('update-notion-entry', updatedData)
+
+                  console.log('Update result:', result)
+
+                  // Update the message with the result
+                  setMessages(prev => prev.map(msg =>
+                    msg.id === message.id
+                      ? {
+                          ...msg,
+                          notionData: result,
+                          text: result.properties.Name?.title[0]?.plain_text || 'Untitled',
+                          isEditing: false
+                        }
+                      : msg
+                  ))
+
+                  // Show success message
+                  setMessages(prev => [...prev, {
+                    id: uuidv4(),
+                    text: `Successfully ${updatedData.isNew ? 'created' : 'updated'} entry`,
+                    sent: false
+                  }])
+                } catch (error: any) {
+                  console.error('Error updating entry:', error)
+                  setMessages(prev => [...prev, {
+                    id: uuidv4(),
+                    text: `Error: ${error.message}`,
+                    sent: false
+                  }])
+                }
+              }}
+              onDelete={async () => {
+                try {
+                  if (!message.notionData.isNew) {
+                    await window.ipcRenderer.invoke('delete-notion-entry', message.notionData.id)
+                    setMessages(prev => prev.filter(msg => msg.id !== message.id))
+                    setMessages(prev => [...prev, {
+                      id: uuidv4(),
+                      text: 'Entry deleted successfully',
+                      sent: false
+                    }])
+                  }
+                } catch (error: any) {
+                  console.error('Error deleting entry:', error)
+                  setMessages(prev => [...prev, {
+                    id: uuidv4(),
+                    text: `Error: ${error.message}`,
+                    sent: false
+                  }])
+                }
+              }}
+            />
+          ) : (
             <div
-              className={`max-w-[70%] break-words rounded-lg px-4 py-2 whitespace-pre-wrap ${
-                message.sent
-                  ? 'bg-green-500 text-white rounded-br-none'
-                  : 'bg-white dark:bg-gray-700 text-gray-800 dark:text-white rounded-bl-none'
-              }`}
+              key={message.id}
+              className={`flex ${message.sent ? 'justify-end' : 'justify-start'}`}
             >
-              {message.text}
+              <div
+                className={`max-w-[70%] break-words rounded-lg px-4 py-2 whitespace-pre-wrap ${
+                  message.sent
+                    ? 'bg-green-500 text-white rounded-br-none'
+                    : 'bg-white dark:bg-gray-700 text-gray-800 dark:text-white rounded-bl-none'
+                }`}
+              >
+                {message.text}
+              </div>
             </div>
-          </div>
+          )
         ))}
       </div>
 
@@ -355,7 +502,7 @@ export default function Chat() {
             value={newMessage}
             onChange={handleInputChange}
             onKeyDown={handleKeyPress}
-            placeholder="Type a message... (⌘Enter to send, type / for commands)"
+            placeholder="Type a message... (Enter to send, type / for commands)"
             disabled={isAnalyzing}
             className="flex-1 rounded-full px-4 py-2 border border-gray-300 dark:border-gray-600
                      focus:outline-none focus:border-green-500
@@ -385,7 +532,7 @@ export default function Chat() {
           )}
 
           <button
-            onClick={handleSend}
+            onClick={handleSubmit}
             className="bg-green-500 text-white rounded-full px-6 py-2
                      hover:bg-green-600 focus:outline-none
                      focus:ring-2 focus:ring-green-500 focus:ring-offset-2

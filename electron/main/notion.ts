@@ -49,20 +49,114 @@ export async function getDatabaseSchema() {
     throw new Error('Notion client not initialized')
   }
 
+  console.log('Fetching database schema for:', databaseId)
+  const database = await notionClient.databases.retrieve({
+    database_id: databaseId
+  })
+
+  console.log('Database schema properties:',
+    Object.keys(database.properties).map(key => ({
+      key,
+      type: database.properties[key].type
+    }))
+  )
+
+  return database
+}
+
+export async function createNotionEntry(data: any) {
+  if (!notionClient || !databaseId) {
+    throw new Error('Notion client not initialized')
+  }
+
+  console.log('Creating Notion entry with data:', JSON.stringify(data, null, 2))
+
   try {
-    const response = await notionClient.databases.retrieve({
+    // Get database schema to find Inbox status ID
+    const database = await notionClient.databases.retrieve({
       database_id: databaseId
     })
 
-    console.log('Database schema:', {
-      title: response.title,
-      properties: Object.keys(response.properties),
-      propertyDetails: response.properties
+    const statusProperty = database.properties.Status
+    const inboxOption = statusProperty.status.options.find(opt => opt.name === 'Inbox')
+
+    // Add Inbox status to properties
+    const properties = {
+      ...data.properties,
+      Status: {
+        type: 'status',
+        status: inboxOption
+      }
+    }
+
+    const response = await notionClient.pages.create({
+      parent: { database_id: databaseId },
+      properties
     })
 
+    console.log('Successfully created entry:', response.id)
     return response
   } catch (error) {
-    console.error('Failed to get database schema:', error)
+    console.error('Failed to create Notion entry:', error)
+    throw error
+  }
+}
+
+export async function updateNotionEntry(data: any) {
+  if (!notionClient) {
+    throw new Error('Notion client not initialized')
+  }
+
+  console.log('Updating Notion entry:', JSON.stringify(data, null, 2))
+
+  try {
+    const response = await notionClient.pages.update({
+      page_id: data.id,
+      properties: data.properties
+    })
+
+    console.log('Successfully updated entry:', response.id)
+    return response
+  } catch (error) {
+    console.error('Failed to update Notion entry:', error)
+    throw error
+  }
+}
+
+export async function deleteNotionEntry(pageId: string) {
+  if (!notionClient) {
+    throw new Error('Notion client not initialized')
+  }
+
+  await notionClient.pages.update({
+    page_id: pageId,
+    archived: true
+  })
+}
+
+export async function getNotionEntries() {
+  if (!notionClient || !databaseId) {
+    throw new Error('Notion client not initialized')
+  }
+
+  console.log('Fetching Notion entries')
+
+  try {
+    const response = await notionClient.databases.query({
+      database_id: databaseId,
+      sorts: [
+        {
+          property: 'Created time',
+          direction: 'descending'
+        }
+      ],
+      page_size: 10
+    })
+
+    console.log(`Retrieved ${response.results.length} entries`)
+    return response.results
+  } catch (error) {
+    console.error('Failed to fetch Notion entries:', error)
     throw error
   }
 }
@@ -96,36 +190,26 @@ export async function queryDatabase(startDate: string, endDate: string) {
     filter: {
       and: [
         {
-          property: propertyName,
+          property: 'Date',
           date: {
             on_or_after: startDate,
           },
         },
         {
-          property: propertyName,
+          property: 'Date',
           date: {
             on_or_before: endDate,
           },
         },
       ],
     },
-    sorts: [
-      {
-        property: propertyName,
-        direction: 'ascending'
-      }
-    ]
   })
 
   console.log('Notion query response:', {
-    resultCount: response.results.length,
-    dateProperty: propertyName
+    resultCount: response.results.length
   })
 
-  return {
-    results: response.results,
-    datePropertyName: propertyName // Return the property name for the client
-  }
+  return response.results
 }
 
 export async function queryTasksByStatus(statusFilter: string) {

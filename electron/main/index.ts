@@ -5,7 +5,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { update } from './update'
 import dotenv from 'dotenv'
-import { initializeNotion, queryDatabase, getDatabaseSchema, queryTasksByStatus } from './notion'
+import { initializeNotion, queryDatabase, getDatabaseSchema, queryTasksByStatus, getNotionEntries, createNotionEntry, updateNotionEntry, deleteNotionEntry } from './notion'
 
 // Load environment variables
 dotenv.config()
@@ -48,7 +48,6 @@ let win: BrowserWindow | null = null
 const preload = path.join(__dirname, '../preload/index.mjs')
 const indexHtml = path.join(RENDERER_DIST, 'index.html')
 
-// Initialize Notion client before setting up IPC handlers
 let notionInitialized = false
 
 async function initializeNotionClient() {
@@ -63,36 +62,71 @@ async function initializeNotionClient() {
 }
 
 function setupIpcHandlers() {
-  ipcMain.handle('query-notion-calendar', async (_, startDate: string, endDate: string) => {
-    if (!notionInitialized) {
-      throw new Error('Notion client not initialized')
-    }
+  console.log('Setting up IPC handlers...')
+
+  ipcMain.handle('get-notion-schema', async () => {
     try {
-      return await queryDatabase(startDate, endDate)
+      console.log('Handling get-notion-schema request')
+      if (!notionInitialized) {
+        await initializeNotionClient()
+      }
+      const schema = await getDatabaseSchema()
+      console.log('Schema retrieved')
+      return schema
     } catch (error) {
-      console.error('Failed to query Notion calendar:', error)
+      console.error('Error in get-notion-schema:', error)
       throw error
     }
   })
 
-  ipcMain.handle('test-notion-connection', async () => {
-    if (!notionInitialized) {
-      throw new Error('Notion client not initialized')
+  ipcMain.handle('get-notion-entries', async () => {
+    try {
+      console.log('Handling get-notion-entries request')
+      if (!notionInitialized) {
+        await initializeNotionClient()
+      }
+      const entries = await getNotionEntries()
+      console.log('Entries retrieved:', entries.length)
+      return entries
+    } catch (error) {
+      console.error('Error in get-notion-entries:', error)
+      throw error
     }
-    return await getDatabaseSchema()
   })
 
-  ipcMain.handle('query-tasks-by-status', async (_, status: string) => {
-    if (!notionInitialized) {
-      throw new Error('Notion client not initialized')
-    }
+  ipcMain.handle('create-notion-entry', async (_, data) => {
     try {
-      console.log('Handling task query for status:', status)
-      const results = await queryTasksByStatus(status)
-      console.log(`Found ${results.length} tasks`)
-      return results
+      console.log('Handling create-notion-entry request')
+      if (!notionInitialized) {
+        await initializeNotionClient()
+      }
+      return await createNotionEntry(data)
     } catch (error) {
-      console.error('Failed to query tasks:', error)
+      console.error('Error in create-notion-entry:', error)
+      throw error
+    }
+  })
+
+  ipcMain.handle('update-notion-entry', async (_, data) => {
+    try {
+      if (!notionInitialized) {
+        await initializeNotionClient()
+      }
+      return await updateNotionEntry(data)
+    } catch (error) {
+      console.error('Error in update-notion-entry:', error)
+      throw error
+    }
+  })
+
+  ipcMain.handle('delete-notion-entry', async (_, pageId) => {
+    try {
+      if (!notionInitialized) {
+        await initializeNotionClient()
+      }
+      return await deleteNotionEntry(pageId)
+    } catch (error) {
+      console.error('Error in delete-notion-entry:', error)
       throw error
     }
   })
@@ -104,15 +138,16 @@ async function createWindow() {
     icon: path.join(process.env.VITE_PUBLIC, 'favicon.ico'),
     webPreferences: {
       preload,
+      nodeIntegration: false,
+      contextIsolation: true,
     },
   })
 
-  // Initialize Notion and setup IPC handlers before loading the window
-  await initializeNotionClient()
+  // Setup IPC handlers before loading the page
   setupIpcHandlers()
 
-  if (VITE_DEV_SERVER_URL) {
-    win.loadURL(VITE_DEV_SERVER_URL)
+  if (process.env.VITE_DEV_SERVER_URL) {
+    win.loadURL(process.env.VITE_DEV_SERVER_URL)
     win.webContents.openDevTools()
   } else {
     win.loadFile(indexHtml)
@@ -167,8 +202,8 @@ ipcMain.handle('open-win', (_, arg) => {
     },
   })
 
-  if (VITE_DEV_SERVER_URL) {
-    childWindow.loadURL(`${VITE_DEV_SERVER_URL}#${arg}`)
+  if (process.env.VITE_DEV_SERVER_URL) {
+    childWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}#${arg}`)
   } else {
     childWindow.loadFile(indexHtml, { hash: arg })
   }
