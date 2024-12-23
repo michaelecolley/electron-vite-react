@@ -1,36 +1,61 @@
 import { useState } from 'react'
-import UpdateElectron from '@/components/update'
-import logoVite from './assets/logo-vite.svg'
-import logoElectron from './assets/logo-electron.svg'
-import './App.css'
+import { ChatList } from './components/chat/ChatList'
+import { ChatMessage } from './components/chat/ChatMessage'
+import { MessageInput } from './components/chat/MessageInput'
+import { ChatHeader } from './components/chat/ChatHeader'
+import { Chat, Message } from './types'
+
+// Dummy data for chats
+const dummyChats: Chat[] = [
+  { id: 1, name: 'Alice Cooper', lastMessage: 'Hey, how are you?', time: '10:30 AM' },
+  { id: 2, name: 'Bob Dylan', lastMessage: 'Meeting at 3?', time: '9:45 AM' },
+  { id: 3, name: 'Charlie Puth', lastMessage: 'Got the files!', time: 'Yesterday' },
+  { id: 4, name: 'David Bowie', lastMessage: 'Thanks!', time: 'Yesterday' },
+]
+
+const dummyMessages: Message[] = [
+  { id: 1, text: 'Hey there!', sent: true, time: '10:30 AM' },
+  { id: 2, text: 'Hi! How are you?', sent: false, time: '10:31 AM' },
+  { id: 3, text: 'I\'m good, thanks! Working on that project.', sent: true, time: '10:32 AM' },
+  { id: 4, text: 'That\'s great! Need any help?', sent: false, time: '10:33 AM' },
+]
 
 function App() {
-  const [count, setCount] = useState(0)
-  return (
-    <div className='App'>
-      <div className='logo-box'>
-        <a href='https://github.com/electron-vite/electron-vite-react' target='_blank'>
-          <img src={logoVite} className='logo vite' alt='Electron + Vite logo' />
-          <img src={logoElectron} className='logo electron' alt='Electron + Vite logo' />
-        </a>
-      </div>
-      <h1>Electron + Vite + React</h1>
-      <div className='card'>
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className='read-the-docs'>
-        Click on the Electron + Vite logo to learn more
-      </p>
-      <div className='flex-center'>
-        Place static files into the<code>/public</code> folder <img style={{ width: '5em' }} src='./node.svg' alt='Node logo' />
-      </div>
+  const [message, setMessage] = useState('')
+  const [selectedChat, setSelectedChat] = useState(1)
 
-      <UpdateElectron />
+  const handleSend = () => {
+    if (message.trim()) {
+      // Here you would typically add the message to your messages state
+      setMessage('')
+    }
+  }
+
+  const selectedChatName = dummyChats.find(chat => chat.id === selectedChat)?.name || ''
+
+  return (
+    <div className="h-screen w-screen flex bg-zinc-100">
+      <ChatList
+        chats={dummyChats}
+        selectedChat={selectedChat}
+        onSelectChat={setSelectedChat}
+      />
+
+      <div className="flex-1 flex flex-col">
+        <ChatHeader name={selectedChatName} />
+
+        <div className="flex-1 overflow-y-auto p-4 bg-zinc-100">
+          {dummyMessages.map((msg) => (
+            <ChatMessage key={msg.id} message={msg} />
+          ))}
+        </div>
+
+        <MessageInput
+          message={message}
+          onMessageChange={setMessage}
+          onSend={handleSend}
+        />
+      </div>
     </div>
   )
 }
