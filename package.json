@@ -20,7 +20,16 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "electron-updater": "^6.3.9"
+    "electron-updater": "^6.3.9",
+    "@tanstack/react-query": "^5.28.4",
+    "cmdk": "^1.0.0",
+    "date-fns": "^3.5.0",
+    "jotai": "^2.7.1",
+    "lucide-react": "^0.358.0",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.0",
+    "tailwind-merge": "^2.2.1",
+    "zod": "^3.22.4"
   },
   "devDependencies": {
     "@playwright/test": "^1.48.2",
@@ -39,6 +48,10 @@
     "vite": "^5.4.11",
     "vite-plugin-electron": "^0.29.0",
     "vite-plugin-electron-renderer": "^0.14.6",
-    "vitest": "^2.1.5"
+    "vitest": "^2.1.5",
+    "@types/node": "^20.11.28",
+    "prettier": "^3.2.5",
+    "prettier-plugin-tailwindcss": "^0.5.12",
+    "shadcn-ui": "^0.8.0"
   }
 }
